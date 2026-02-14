@@ -66,7 +66,7 @@ def get_latest_transcript_link(bse_code):
                 ann_date = item.get("NEWS_DT", "")
 
                 if pdf_file:
-                    full_url = "https://www.bseindia.com/xml-data/corpfiling/AttachLive/" + pdf_file
+                    full_url = "https://www.bseindia.com/xml-data/corpfiling/AttachHis/" + pdf_file + ".pdf"
                     return full_url, headline, ann_date
 
         return None, None, None
@@ -77,12 +77,26 @@ def get_latest_transcript_link(bse_code):
 
 def download_pdf(url, filename):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if r.status_code == 200:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.bseindia.com/",
+            "Accept": "application/pdf",
+            "Origin": "https://www.bseindia.com"
+        }
+
+        r = requests.get(url, headers=headers, timeout=TIMEOUT)
+
+        print("Status:", r.status_code)
+        print("Content-Type:", r.headers.get("Content-Type"))
+
+        if r.status_code == 200 and "application/pdf" in r.headers.get("Content-Type", ""):
             with open(filename, "wb") as f:
                 f.write(r.content)
             return True
-        return False
+        else:
+            print("Not a valid PDF response.")
+            return False
+
     except Exception as e:
         print(f"Error downloading PDF: {e}")
         return False
