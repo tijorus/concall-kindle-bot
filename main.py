@@ -1,5 +1,4 @@
 import requests
-from bs4 import BeautifulSoup
 import pdfplumber
 from ebooklib import epub
 import json
@@ -8,287 +7,126 @@ import smtplib
 from email.message import EmailMessage
 import re
 from datetime import datetime
+import time
 
 # ---------------- SETTINGS ---------------- #
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Referer": "https://www.bseindia.com/",
+    "Origin": "https://www.bseindia.com",
+    "Accept": "application/json, text/plain, */*"
+}
+TIMEOUT = 30
 
-BSE_BASE = "https://www.bseindia.com/corporates/ann.aspx?code="
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-TIMEOUT = 20
-
-EMAIL = os.environ["EMAIL_ADDRESS"]
-PASSWORD = os.environ["EMAIL_PASSWORD"]
-KINDLE = os.environ["KINDLE_EMAIL"]
-
-# ---------------- LOAD FILES ---------------- #
-
-with open("watchlist.json") as f:
-    watchlist = json.load(f)["companies"]
-
-with open("processed.json") as f:
-    processed = json.load(f)
+EMAIL = os.environ.get("EMAIL_ADDRESS")
+PASSWORD = os.environ.get("EMAIL_PASSWORD")
+KINDLE = os.environ.get("KINDLE_EMAIL")
 
 # ---------------- FUNCTIONS ---------------- #
 
 def get_latest_transcript_link(bse_code):
+    api_url = f"https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?strCat=-1&strPrevDate=&strScripCode={bse_code}&strSearch=P&strToDate=&strType=C&subcategory=-1"
     try:
-        api_url = (
-            "https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w"
-            "?strCat=-1"
-            "&strPrevDate="
-            "&strScripCode=" + bse_code +
-            "&strSearch=All"
-            "&strToDate="
-            "&strType=C"
-            "&subcategory=-1"
-        )
-
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.bseindia.com/",
-            "Origin": "https://www.bseindia.com"
-        }
-
-        r = requests.get(api_url, headers=headers, timeout=TIMEOUT)
-
-        if r.status_code != 200:
-            print("API status error:", r.status_code)
-            return None, None, None
-
+        r = requests.get(api_url, headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code != 200: return None, None, None
+        
         data = r.json()
-
-        if "Table" not in data:
-            print("No Table data in API response.")
-            return None, None, None
-
-        for item in data["Table"]:
+        for item in data.get("Table", []):
             headline = item.get("HEADLINE", "").lower()
-            print("Headline found:", headline)
-
-            # Strict transcript match
-            if (
-                "earnings call transcript" in headline
-                or "conference call transcript" in headline
-                or ("earnings call" in headline and "transcript" in headline)
-            ):
-
+            # Look for Transcript keywords
+            if "transcript" in headline and ("earnings" in headline or "call" in headline):
                 pdf_file = item.get("ATTACHMENTNAME", "")
                 ann_date = item.get("NEWS_DT", "")
-
                 if pdf_file:
-                    full_url = (
-                        "https://www.bseindia.com/xml-data/corpfiling/AttachHis/"
-                        + pdf_file + ".pdf"
-                    )
-
-                    return full_url, headline, ann_date
-
+                    full_url = f"https://www.bseindia.com/xml-data/corpfiling/AttachHis/{pdf_file}.pdf"
+                    return full_url, item.get("HEADLINE"), ann_date
         return None, None, None
-
     except Exception as e:
-        print("API error:", e)
+        print(f"API Error for {bse_code}: {e}")
         return None, None, None
 
 def download_pdf(url, filename):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.bseindia.com/",
-            "Accept": "application/pdf",
-            "Origin": "https://www.bseindia.com"
-        }
-
-        r = requests.get(url, headers=headers, timeout=TIMEOUT)
-
-        print("Status:", r.status_code)
-        print("Content-Type:", r.headers.get("Content-Type"))
-
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code == 200 and "application/pdf" in r.headers.get("Content-Type", ""):
             with open(filename, "wb") as f:
                 f.write(r.content)
             return True
-        else:
-            print("Not a valid PDF response.")
-            return False
-
     except Exception as e:
-        print(f"Error downloading PDF: {e}")
-        return False
+        print(f"Download Error: {e}")
+    return False
 
-
-def extract_text_from_pdf(filename):
+def process_transcript(filename):
     text = ""
-    try:
-        with pdfplumber.open(filename) as pdf:
-            for page in pdf.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n"
-        return text
-    except Exception as e:
-        print(f"Error extracting PDF text: {e}")
-        return ""
+    with pdfplumber.open(filename) as pdf:
+        for page in pdf.pages:
+            content = page.extract_text()
+            if content: text += content + "\n"
+    
+    # Cleaning and Splitting
+    text = re.sub(r"Safe Harbor.*", "", text, flags=re.IGNORECASE | re.DOTALL)
+    qa_pattern = r"(question\s*[-&]?\s*and\s*answer\s*session|q\s*&\s*a\s*session)"
+    split = re.split(qa_pattern, text, maxsplit=1, flags=re.IGNORECASE)
+    
+    mgt = split[0]
+    qa = split[2] if len(split) > 2 else ""
+    
+    # Highlights (lines with currency or percentages)
+    highlights = [l.strip() for l in text.split('\n') if any(x in l for x in ["₹", "%", "Cr", "Mn", "billion"])]
+    return mgt.strip(), qa.strip(), highlights[:15]
 
-
-def clean_text(text):
-    text = re.sub(r"Safe Harbor.*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\n{2,}", "\n", text)
-    return text.strip()
-
-
-def split_sections(text):
-    qa_patterns = ["question-and-answer", "q&a", "questions and answers"]
-
-    lower_text = text.lower()
-    for pattern in qa_patterns:
-        if pattern in lower_text:
-            idx = lower_text.index(pattern)
-            return text[:idx], text[idx:]
-
-    return text, ""
-
-
-def extract_numeric_highlights(text):
-    lines = text.split("\n")
-    highlights = []
-
-    for line in lines:
-        if any(x in line for x in ["₹", "%", "crore", "million", "bn", "lakh"]):
-            highlights.append(line.strip())
-
-    return highlights[:15]
-
-
-def extract_quarter(title_text):
-    if not title_text:
-        return "UnknownQ"
-
-    match = re.search(r"(Q[1-4]\s?FY\s?\d{2,4})", title_text, re.IGNORECASE)
-    if match:
-        return match.group(1).replace(" ", "")
-    return "UnknownQ"
-
-
-def create_epub(company, management, qa, highlights, quarter, ann_date):
-    safe_company = company.replace(" ", "_")
-
-    if ann_date:
-        safe_date = ann_date.replace(":", "-").replace("/", "-")
-    else:
-        safe_date = datetime.today().strftime("%Y-%m-%d")
-
-    filename = f"{safe_company}_{quarter}_{safe_date}.epub"
-
+def create_epub(company, mgt, qa, highlights, title, date):
+    safe_name = re.sub(r'\W+', '', company)
+    filename = f"{safe_name}_Transcript.epub"
+    
     book = epub.EpubBook()
-    book.set_identifier(safe_company)
-    book.set_title(f"{company} {quarter}")
-    book.set_language("en")
-    book.add_author("Investor Relations")
-
-    # Create chapter
-    chapter = epub.EpubHtml(title="Transcript", file_name="chap_01.xhtml")
-
-    highlight_html = "<br>".join(highlights)
-    management_html = management.replace("\n", "<br>")
-    qa_html = qa.replace("\n", "<br>")
-
-    chapter.content = f"""
-    <h1>{company} {quarter}</h1>
-    <h3>Announcement Date: {safe_date}</h3>
-
-    <h2>Numeric Highlights</h2>
-    <p>{highlight_html}</p>
-
-    <h2>Management Commentary</h2>
-    <p>{management_html}</p>
-
-    <h2>Q&A Session</h2>
-    <p>{qa_html}</p>
-    """
-
-    book.add_item(chapter)
-
-    # Add default navigation files (REQUIRED for Kindle)
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-
-    # Define Table of Contents
-    book.toc = (chapter,)
-
-    # Define spine
-    book.spine = ["nav", chapter]
-
+    book.set_title(f"{company} - {title}")
+    book.set_language('en')
+    book.add_author("BSE Automated Scraper")
+    
+    content = f"<h1>{company}</h1><h3>{title}</h3><p>Date: {date}</p>"
+    content += "<h2>Highlights</h2><ul>" + "".join(f"<li>{h}</li>" for h in highlights) + "</ul>"
+    content += f"<h2>Management</h2><p>{mgt.replace(chr(10), '<br>')}</p>"
+    content += f"<h2>Q&A</h2><p>{qa.replace(chr(10), '<br>')}</p>"
+    
+    c1 = epub.EpubHtml(title="Transcript", file_name="transcript.xhtml", content=content)
+    book.add_item(c1)
+    book.spine = [c1]
     epub.write_epub(filename, book)
-
     return filename
 
 def send_to_kindle(file_path):
-    try:
-        msg = EmailMessage()
-        msg["Subject"] = "Automated Concall Transcript"
-        msg["From"] = EMAIL
-        msg["To"] = KINDLE
-        msg.set_content("Concall transcript attached.")
+    msg = EmailMessage()
+    msg["Subject"] = "Transcript Update"
+    msg["From"], msg["To"] = EMAIL, KINDLE
+    with open(file_path, "rb") as f:
+        msg.add_attachment(f.read(), maintype="application", subtype="epub+zip", filename=file_path)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(EMAIL, PASSWORD)
+        smtp.send_message(msg)
 
-        with open(file_path, "rb") as f:
-            msg.add_attachment(
-                f.read(),
-                maintype="application",
-                subtype="epub+zip",
-                filename=file_path
-            )
+# ---------------- MAIN ---------------- #
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(EMAIL, PASSWORD)
-            smtp.send_message(msg)
+if __name__ == "__main__":
+    if not os.path.exists("processed.json"):
+        with open("processed.json", "w") as f: json.dump([], f)
+    
+    with open("watchlist.json") as f: watchlist = json.load(f)["companies"]
+    with open("processed.json") as f: processed = json.load(f)
 
-        print("Sent to Kindle successfully.")
-
-    except Exception as e:
-        print(f"Error sending email: {e}")
-
-
-# ---------------- MAIN PROCESS ---------------- #
-
-for company in watchlist:
-    name = company["name"]
-    code = company["bse_code"]
-
-    print(f"Checking {name}...")
-
-    try:
-        link, title_text, ann_date = get_latest_transcript_link(code)
-
-        if not link:
-            print("No transcript found.")
-            continue
-
-        if link in processed:
-            print("Already processed.")
-            continue
-
-        pdf_file = f"{name.replace(' ', '_')}.pdf"
-
-        if not download_pdf(link, pdf_file):
-            continue
-
-        raw_text = extract_text_from_pdf(pdf_file)
-        if not raw_text:
-            continue
-
-        cleaned = clean_text(raw_text)
-        management, qa = split_sections(cleaned)
-        highlights = extract_numeric_highlights(cleaned)
-        quarter = extract_quarter(title_text)
-
-        epub_file = create_epub(name, management, qa, highlights, quarter, ann_date)
-        send_to_kindle(epub_file)
-
-        processed.append(link)
-
-        with open("processed.json", "w") as f:
-            json.dump(processed, f, indent=2)
-
-        print(f"Completed {name}")
-
-    except Exception as e:
-        print(f"Unexpected error for {name}: {e}")
+    for company in watchlist:
+        print(f"Checking {company['name']}...")
+        link, title, date = get_latest_transcript_link(company["bse_code"])
+        
+        if link and link not in processed:
+            pdf_path = "temp.pdf"
+            if download_pdf(link, pdf_path):
+                mgt, qa, highlights = process_transcript(pdf_path)
+                epub_file = create_epub(company["name"], mgt, qa, highlights, title, date)
+                send_to_kindle(epub_file)
+                processed.append(link)
+                print(f"Success: {company['name']}")
+                time.sleep(5) # Avoid BSE rate limits
+    
+    with open("processed.json", "w") as f:
+        json.dump(processed, f, indent=2)
