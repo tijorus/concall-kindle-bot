@@ -51,28 +51,41 @@ def get_latest_transcript_link(bse_code):
         r = requests.get(api_url, headers=headers, timeout=TIMEOUT)
 
         if r.status_code != 200:
+            print("API status error:", r.status_code)
             return None, None, None
 
         data = r.json()
 
         if "Table" not in data:
+            print("No Table data in API response.")
             return None, None, None
 
         for item in data["Table"]:
             headline = item.get("HEADLINE", "").lower()
+            print("Headline found:", headline)
 
-            if "transcript" in headline:
+            # Strict transcript match
+            if (
+                "earnings call transcript" in headline
+                or "conference call transcript" in headline
+                or ("earnings call" in headline and "transcript" in headline)
+            ):
+
                 pdf_file = item.get("ATTACHMENTNAME", "")
                 ann_date = item.get("NEWS_DT", "")
 
                 if pdf_file:
-                    full_url = "https://www.bseindia.com/xml-data/corpfiling/AttachHis/" + pdf_file + ".pdf"
+                    full_url = (
+                        "https://www.bseindia.com/xml-data/corpfiling/AttachHis/"
+                        + pdf_file + ".pdf"
+                    )
+
                     return full_url, headline, ann_date
 
         return None, None, None
 
     except Exception as e:
-        print(f"API error: {e}")
+        print("API error:", e)
         return None, None, None
 
 def download_pdf(url, filename):
