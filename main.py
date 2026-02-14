@@ -59,11 +59,12 @@ def get_latest_transcript_link(bse_code):
             title = item.get("HEADLINE", "").lower()
 
             if "transcript" in title:
-                pdf_link = item.get("ATTACHMENTNAME", "")
+                pdf_file = item.get("ATTACHMENTNAME", "")
                 ann_date = item.get("NEWS_DT", "")
 
-                if pdf_link:
-                    return pdf_link, title, ann_date
+                if pdf_file:
+                    full_url = "https://www.bseindia.com/xml-data/corpfiling/AttachLive/" + pdf_file
+                    return full_url, title, ann_date
 
         return None, None, None
 
