@@ -27,23 +27,22 @@ KINDLE = os.environ.get("KINDLE_EMAIL")
 def get_latest_transcript_link(bse_code):
     api_url = f"https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?strCat=-1&strPrevDate=&strScripCode={bse_code}&strSearch=P&strToDate=&strType=C&subcategory=-1"
     try:
-        r = requests.get(api_url, headers=HEADERS, timeout=TIMEOUT)
-        if r.status_code != 200: return None, None, None
-        
+        r = requests.get(api_url, headers=HEADERS, timeout=20)
         data = r.json()
-        for item in data.get("Table", []):
+        
+        # Look through the last 20 announcements, not just the first one
+        for item in data.get("Table", [])[:20]: 
             headline = item.get("HEADLINE", "").lower()
-            # Look for Transcript keywords
-            if "transcript" in headline and ("earnings" in headline or "call" in headline):
+            
+            # Use a more flexible search for transcripts
+            if "transcript" in headline:
                 pdf_file = item.get("ATTACHMENTNAME", "")
-                ann_date = item.get("NEWS_DT", "")
                 if pdf_file:
-                    full_url = f"https://www.bseindia.com/xml-data/corpfiling/AttachHis/{pdf_file}.pdf"
-                    return full_url, item.get("HEADLINE"), ann_date
-        return None, None, None
+                    url = f"https://www.bseindia.com/xml-data/corpfiling/AttachHis/{pdf_file}.pdf"
+                    return url, item.get("HEADLINE"), item.get("NEWS_DT")
     except Exception as e:
-        print(f"API Error for {bse_code}: {e}")
-        return None, None, None
+        print(f"Error fetching API for {bse_code}: {e}")
+    return None, None, None
 
 def download_pdf(url, filename):
     try:
