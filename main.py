@@ -36,7 +36,7 @@ def get_latest_transcript_link(bse_code):
             "?strCat=-1"
             "&strPrevDate="
             "&strScripCode=" + bse_code +
-            "&strSearch=P"
+            "&strSearch=All"
             "&strToDate="
             "&strType=C"
             "&subcategory=-1"
@@ -176,7 +176,7 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
     else:
         safe_date = datetime.today().strftime("%Y-%m-%d")
 
-    filename = f"{safe_company}{quarter}{safe_date}.epub"
+    filename = f"{safe_company}_{quarter}_{safe_date}.epub"
 
     book = epub.EpubBook()
     book.set_identifier(safe_company)
