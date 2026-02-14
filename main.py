@@ -31,12 +31,15 @@ with open("processed.json") as f:
 
 def get_latest_transcript_link(bse_code):
     try:
-        # BSE announcement API endpoint
         api_url = (
-            "https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w"
-            "?pageno=1&strCat=-1&strPrevDate=&strScripCode="
-            + bse_code +
-            "&strSearch=P&strToDate=&strType=C&subcategory=-1"
+            "https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w"
+            "?strCat=-1"
+            "&strPrevDate="
+            "&strScripCode=" + bse_code +
+            "&strSearch=P"
+            "&strToDate="
+            "&strType=C"
+            "&subcategory=-1"
         )
 
         headers = {
@@ -56,20 +59,20 @@ def get_latest_transcript_link(bse_code):
             return None, None, None
 
         for item in data["Table"]:
-            title = item.get("HEADLINE", "").lower()
+            headline = item.get("HEADLINE", "").lower()
 
-            if "transcript" in title:
+            if "transcript" in headline:
                 pdf_file = item.get("ATTACHMENTNAME", "")
                 ann_date = item.get("NEWS_DT", "")
 
                 if pdf_file:
                     full_url = "https://www.bseindia.com/xml-data/corpfiling/AttachLive/" + pdf_file
-                    return full_url, title, ann_date
+                    return full_url, headline, ann_date
 
         return None, None, None
 
     except Exception as e:
-        print(f"API fetch error: {e}")
+        print(f"API error: {e}")
         return None, None, None
 
 def download_pdf(url, filename):
@@ -142,22 +145,22 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
     safe_company = company.replace(" ", "_")
 
     if ann_date:
-        safe_date = ann_date.replace("/", "-")
+        safe_date = ann_date.replace(":", "-").replace("/", "-")
     else:
         safe_date = datetime.today().strftime("%Y-%m-%d")
 
     filename = f"{safe_company}{quarter}{safe_date}.epub"
 
     book = epub.EpubBook()
+    book.set_identifier(safe_company)
     book.set_title(f"{company} {quarter}")
     book.set_language("en")
     book.add_author("Investor Relations")
 
-    chapter = epub.EpubHtml(title="Transcript", file_name="content.xhtml")
+    # Create chapter
+    chapter = epub.EpubHtml(title="Transcript", file_name="chap_01.xhtml")
 
     highlight_html = "<br>".join(highlights)
-
-    # ✅ FIX: Preprocess before f-string
     management_html = management.replace("\n", "<br>")
     qa_html = qa.replace("\n", "<br>")
 
@@ -176,9 +179,19 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
     """
 
     book.add_item(chapter)
+
+    # Add default navigation files (REQUIRED for Kindle)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+
+    # Define Table of Contents
+    book.toc = (chapter,)
+
+    # Define spine
     book.spine = ["nav", chapter]
 
     epub.write_epub(filename, book)
+
     return filename
 
 def send_to_kindle(file_path):
