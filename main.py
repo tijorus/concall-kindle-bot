@@ -136,7 +136,7 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
     else:
         safe_date = datetime.today().strftime("%Y-%m-%d")
 
-    filename = f"{safe_company}_{quarter}_{safe_date}.epub"
+    filename = f"{safe_company}{quarter}{safe_date}.epub"
 
     book = epub.EpubBook()
     book.set_title(f"{company} {quarter}")
@@ -147,6 +147,10 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
 
     highlight_html = "<br>".join(highlights)
 
+    # ✅ FIX: Preprocess before f-string
+    management_html = management.replace("\n", "<br>")
+    qa_html = qa.replace("\n", "<br>")
+
     chapter.content = f"""
     <h1>{company} {quarter}</h1>
     <h3>Announcement Date: {safe_date}</h3>
@@ -155,10 +159,10 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
     <p>{highlight_html}</p>
 
     <h2>Management Commentary</h2>
-    <p>{management.replace("\n", "<br>")}</p>
+    <p>{management_html}</p>
 
     <h2>Q&A Session</h2>
-    <p>{qa.replace("\n", "<br>")}</p>
+    <p>{qa_html}</p>
     """
 
     book.add_item(chapter)
@@ -166,7 +170,6 @@ def create_epub(company, management, qa, highlights, quarter, ann_date):
 
     epub.write_epub(filename, book)
     return filename
-
 
 def send_to_kindle(file_path):
     try:
