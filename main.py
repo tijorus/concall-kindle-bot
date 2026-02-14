@@ -31,36 +31,45 @@ with open("processed.json") as f:
 
 def get_latest_transcript_link(bse_code):
     try:
-        url = BSE_BASE + bse_code
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        # BSE announcement API endpoint
+        api_url = (
+            "https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w"
+            "?pageno=1&strCat=-1&strPrevDate=&strScripCode="
+            + bse_code +
+            "&strSearch=P&strToDate=&strType=C&subcategory=-1"
+        )
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.bseindia.com/",
+            "Origin": "https://www.bseindia.com"
+        }
+
+        r = requests.get(api_url, headers=headers, timeout=TIMEOUT)
+
         if r.status_code != 200:
             return None, None, None
 
-        soup = BeautifulSoup(r.text, "html.parser")
+        data = r.json()
 
-        for row in soup.find_all("tr"):
-            link = row.find("a", href=True)
-            if link:
-                text = link.text.lower()
-                if ("transcript" in text or "earnings call" in text) and ".pdf" in link["href"].lower():
+        if "Table" not in data:
+            return None, None, None
 
-                    cols = row.find_all("td")
-                    date_text = None
-                    if cols:
-                        date_text = cols[0].text.strip()
+        for item in data["Table"]:
+            title = item.get("HEADLINE", "").lower()
 
-                    return (
-                        "https://www.bseindia.com" + link["href"],
-                        link.text,
-                        date_text
-                    )
+            if "transcript" in title:
+                pdf_link = item.get("ATTACHMENTNAME", "")
+                ann_date = item.get("NEWS_DT", "")
+
+                if pdf_link:
+                    return pdf_link, title, ann_date
 
         return None, None, None
 
     except Exception as e:
-        print(f"Error fetching transcript link: {e}")
+        print(f"API fetch error: {e}")
         return None, None, None
-
 
 def download_pdf(url, filename):
     try:
